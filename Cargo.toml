@@ -1,0 +1,21 @@
+[package]
+name = "ray_tracing"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bytemuck = "1.23.2"
+derive_more = { version = "2.0.1", features = ["constructor"] }
+fastrand = "2.3.0"
+fastrand-contrib = "0.1.0"
+glam = { version = "0.30.5", features = ["bytemuck", "fast-math"] }
+image = { version = "0.25.6", features = [
+    "png",
+    "rayon",
+], default-features = false }
+rayon = "1.11.0"
+
+# [profile.release]
+# lto = true
+# codegen-units = 1
+# incremental = true
