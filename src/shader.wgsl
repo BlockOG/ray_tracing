@@ -61,7 +61,7 @@ fn rand_f32(rng_state: ptr<function, u32>) -> f32 {
 }
 
 fn erfinv(x: f32) -> f32 {
-    let sgn = 1.0 - (2.0 / 0x80000000.0) * f32(bitcast<u32>(x) & 0x80000000);
+    let sgn = sign(x);
     let x1 = (1.0 - x) * (1.0 + x);
     let lnx = log(x1);
     let tt1 = 2.0 / (3.14159265359 * 0.147) + 0.5 * lnx;
@@ -71,7 +71,7 @@ fn erfinv(x: f32) -> f32 {
 }
 
 fn rand_vec3(rng_state: ptr<function, u32>) -> vec3<f32> {
-    return normalize(vec3<f32>(erfinv(rand_f32(rng_state) - 0.5), erfinv(rand_f32(rng_state) - 0.5), erfinv(rand_f32(rng_state) - 0.5)));
+    return normalize(vec3<f32>(erfinv(rand_f32(rng_state) * 2.0 - 1.0), erfinv(rand_f32(rng_state) * 2.0 - 1.0), erfinv(rand_f32(rng_state) * 2.0 - 1.0)));
 }
 
 @compute @workgroup_size(8, 8)

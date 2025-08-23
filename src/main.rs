@@ -1,7 +1,7 @@
 use std::{iter, mem, time::Instant};
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Affine3A, Mat4, Quat, Vec2, Vec3};
+use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec3A};
 use image::{RgbImage, RgbaImage, buffer::ConvertBuffer};
 use speedy::{Readable, Writable};
 use wgpu::{Extent3d, util::DeviceExt};
@@ -206,7 +206,7 @@ fn main() {
             .map(|mesh| {
                 let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: None,
-                    contents: bytemuck::cast_slice(&mesh.vertices.iter().map(|vertex| vertex.pos).collect::<Vec<Vec3>>()),
+                    contents: bytemuck::cast_slice(&mesh.vertices.iter().map(|vertex| vertex.pos.into()).collect::<Vec<Vec3A>>()),
                     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::BLAS_INPUT,
                 });
                 let blas_geometry_size_description = wgpu::BlasTriangleGeometrySizeDescriptor {
@@ -357,7 +357,7 @@ fn main() {
                         size,
                         vertex_buffer,
                         first_vertex: 0,
-                        vertex_stride: mem::size_of::<Vec3>() as u64,
+                        vertex_stride: mem::size_of::<Vec3A>() as u64,
                         index_buffer: None,
                         first_index: None,
                         transform_buffer: None,
