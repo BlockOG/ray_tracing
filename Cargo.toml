@@ -8,12 +8,15 @@ bytemuck = "1.23.2"
 derive_more = { version = "2.0.1", features = ["constructor"] }
 fastrand = "2.3.0"
 fastrand-contrib = "0.1.0"
-glam = { version = "0.30.5", features = ["bytemuck", "fast-math"] }
+glam = { version = "0.30.5", features = ["bytemuck", "fast-math", "speedy"] }
 image = { version = "0.25.6", features = [
     "png",
     "rayon",
 ], default-features = false }
+pollster = "0.4.0"
 rayon = "1.11.0"
+speedy = "0.8.7"
+wgpu = "26.0.1"
 
 # [profile.release]
 # lto = true
