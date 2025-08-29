@@ -2,15 +2,16 @@ use std::{iter, mem, time::Instant};
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec3A};
-use image::{RgbImage, RgbaImage, buffer::ConvertBuffer};
+use image::{RgbImage, Rgba32FImage, buffer::ConvertBuffer};
 use speedy::{Readable, Writable};
 use wgpu::{Extent3d, util::DeviceExt};
 
 const WIDTH: u32 = 1080;
 const HEIGHT: u32 = 1080;
 
-const MAX_BOUNCE_COUNT: usize = 30;
-const RAYS_PER_PIXEL: usize = 1000;
+const MAX_BOUNCE_COUNT: u32 = 100;
+const RAYS_PER_PIXEL: u32 = 100;
+const FRAMES: u32 = 100;
 
 #[derive(Debug, Clone, Copy, Readable, Writable)]
 struct Camera {
@@ -30,6 +31,10 @@ struct Material {
     specular_probability: f32,
     specular_color: Vec3,
     smoothness: f32,
+    typ: u32,
+    ior: f32,
+    absorption: f32,
+    _p0: [u32; 1],
 }
 
 #[derive(Debug, Clone, Copy, Readable, Writable)]
@@ -120,7 +125,7 @@ fn main() {
         let uniforms = {
             let view = Mat4::look_to_rh(world.camera.position, world.camera.rotation * Vec3::NEG_Z, Vec3::Y);
             let proj = Mat4::perspective_rh(world.camera.field_of_view.to_radians(), WIDTH as f32 / HEIGHT as f32, world.camera.near, world.camera.far);
-            Uniforms::new(view.inverse(), proj.inverse(), MAX_BOUNCE_COUNT as u32, RAYS_PER_PIXEL as u32)
+            Uniforms::new(view.inverse(), proj.inverse(), MAX_BOUNCE_COUNT, RAYS_PER_PIXEL)
         };
 
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -132,6 +137,12 @@ fn main() {
             label: None,
             contents: bytemuck::cast_slice(&[uniforms]),
             usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let frame_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: mem::size_of::<u32>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
@@ -178,13 +189,38 @@ fn main() {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: wgpu::TextureFormat::Rgba32Float,
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[wgpu::TextureFormat::Rgba8Unorm],
+            view_formats: &[wgpu::TextureFormat::Rgba32Float],
         });
         let output_texture_view = output_texture.create_view(&wgpu::TextureViewDescriptor {
             label: None,
-            format: Some(wgpu::TextureFormat::Rgba8Unorm),
+            format: Some(wgpu::TextureFormat::Rgba32Float),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            usage: None,
+            aspect: wgpu::TextureAspect::All,
+            base_mip_level: 0,
+            mip_level_count: None,
+            base_array_layer: 0,
+            array_layer_count: None,
+        });
+        let prev_output_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: Extent3d {
+                width: WIDTH,
+                height: HEIGHT,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba32Float,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[wgpu::TextureFormat::Rgba32Float],
+        });
+        let prev_output_texture_view = prev_output_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: None,
+            format: Some(wgpu::TextureFormat::Rgba32Float),
             dimension: Some(wgpu::TextureViewDimension::D2),
             usage: None,
             aspect: wgpu::TextureAspect::All,
@@ -195,7 +231,7 @@ fn main() {
         });
         let download_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: (WIDTH * 4).next_multiple_of(256) as u64 * HEIGHT as u64,
+            size: (WIDTH * 4 * 4).next_multiple_of(256) as u64 * HEIGHT as u64,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -265,7 +301,7 @@ fn main() {
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::StorageTexture {
                         access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        format: wgpu::TextureFormat::Rgba32Float,
                         view_dimension: wgpu::TextureViewDimension::D2,
                     },
                     count: None,
@@ -295,6 +331,26 @@ fn main() {
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::ReadOnly,
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -343,11 +399,18 @@ fn main() {
                     binding: 5,
                     resource: vertex_offset_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&prev_output_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: frame_buffer.as_entire_binding(),
+                },
             ],
         });
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-
         encoder.build_acceleration_structures(
             blases
                 .iter()
@@ -368,14 +431,43 @@ fn main() {
                 .iter(),
             iter::once(&tlas),
         );
+        queue.submit(Some(encoder.finish()));
 
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
-            pass.set_pipeline(&pipeline);
-            pass.set_bind_group(0, Some(&bind_group), &[]);
-            pass.dispatch_workgroups(WIDTH.div_ceil(8), HEIGHT.div_ceil(8), 1);
+        for frame in 0..FRAMES {
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &output_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &prev_output_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: WIDTH,
+                    height: HEIGHT,
+                    depth_or_array_layers: 1,
+                },
+            );
+
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, Some(&bind_group), &[]);
+                pass.dispatch_workgroups(WIDTH.div_ceil(8), HEIGHT.div_ceil(8), 1);
+            }
+
+            queue.write_buffer(&frame_buffer, 0, bytemuck::cast_slice(&[frame]));
+            queue.submit(Some(encoder.finish()));
         }
 
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &output_texture,
@@ -387,7 +479,7 @@ fn main() {
                 buffer: &download_buffer,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some((WIDTH * 4).next_multiple_of(256)),
+                    bytes_per_row: Some((WIDTH * 4 * 4).next_multiple_of(256)),
                     rows_per_image: None,
                 },
             },
@@ -397,7 +489,6 @@ fn main() {
                 depth_or_array_layers: 1,
             },
         );
-
         queue.submit(Some(encoder.finish()));
 
         let download_buffer = download_buffer.slice(..);
@@ -405,8 +496,8 @@ fn main() {
         device.poll(wgpu::PollType::Wait).unwrap();
 
         let data = download_buffer.get_mapped_range();
-        let data: &[u8] = bytemuck::cast_slice(&data);
-        RgbaImage::from_raw(
+        let data: &[f32] = bytemuck::cast_slice(&data);
+        Rgba32FImage::from_raw(
             WIDTH,
             HEIGHT,
             data.chunks((WIDTH as usize * 4).next_multiple_of(256)).flat_map(|b| b.into_iter().map(|b| *b).take(WIDTH as usize * 4)).collect(),
