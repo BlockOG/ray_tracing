@@ -3,7 +3,7 @@ use std::{iter, mem, time::Instant};
 use bytemuck::{Pod, Zeroable};
 use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec3A};
 use image::{RgbImage, Rgba32FImage, buffer::ConvertBuffer};
-use speedy::{Readable, Writable};
+use speedy::Readable;
 use wgpu::{Extent3d, util::DeviceExt};
 
 const WIDTH: u32 = 1080;
@@ -13,7 +13,7 @@ const MAX_BOUNCE_COUNT: u32 = 100;
 const RAYS_PER_PIXEL: u32 = 100;
 const FRAMES: u32 = 100;
 
-#[derive(Debug, Clone, Copy, Readable, Writable)]
+#[derive(Debug, Clone, Copy, Readable)]
 struct Camera {
     position: Vec3,
     rotation: Quat,
@@ -23,7 +23,7 @@ struct Camera {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Pod, Zeroable, Readable, Writable)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable, Readable)]
 struct Material {
     color: Vec3,
     emission_strength: f32,
@@ -34,40 +34,37 @@ struct Material {
     typ: u32,
     ior: f32,
     absorption: f32,
+    #[speedy(skip)]
     _p0: [u32; 1],
-}
-
-#[derive(Debug, Clone, Copy, Readable, Writable)]
-struct WrittenVertex {
-    pos: Vec3,
-    tex_coord: Vec2,
-    normal: Vec3,
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable, Readable)]
 struct Vertex {
     pos: Vec3,
+    #[speedy(skip)]
     _p0: [u32; 1],
     tex_coord: Vec2,
+    #[speedy(skip)]
     _p1: [u32; 2],
     normal: Vec3,
+    #[speedy(skip)]
     _p2: [u32; 1],
 }
 
-#[derive(Debug, Clone, Readable, Writable)]
+#[derive(Debug, Clone, Readable)]
 struct Mesh {
-    vertices: Vec<WrittenVertex>,
+    vertices: Vec<Vertex>,
 }
 
-#[derive(Debug, Clone, Copy, Readable, Writable)]
+#[derive(Debug, Clone, Copy, Readable)]
 struct Instance {
     transform: Affine3A,
     mesh: u32,
     material: u32,
 }
 
-#[derive(Debug, Clone, Readable, Writable)]
+#[derive(Debug, Clone, Readable)]
 struct World {
     camera: Camera,
     materials: Vec<Material>,
@@ -92,7 +89,7 @@ impl Uniforms {
             proj_inverse,
             max_bounce_count,
             rays_per_pixel,
-            _p0: [0, 0],
+            _p0: Default::default(),
         }
     }
 }
@@ -146,21 +143,7 @@ fn main() {
         });
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: bytemuck::cast_slice(
-                &world
-                    .meshes
-                    .iter()
-                    .flat_map(|mesh| mesh.vertices.iter())
-                    .map(|vertex| Vertex {
-                        pos: vertex.pos,
-                        _p0: [0],
-                        tex_coord: vertex.tex_coord,
-                        _p1: [0, 0],
-                        normal: vertex.normal,
-                        _p2: [0],
-                    })
-                    .collect::<Vec<Vertex>>(),
-            ),
+            contents: bytemuck::cast_slice(&world.meshes.iter().flat_map(|mesh| mesh.vertices.iter()).copied().collect::<Vec<Vertex>>()),
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
         });
         let vertex_offset_buffer = {
@@ -497,12 +480,7 @@ fn main() {
 
         let data = download_buffer.get_mapped_range();
         let data: &[f32] = bytemuck::cast_slice(&data);
-        Rgba32FImage::from_raw(
-            WIDTH,
-            HEIGHT,
-            data.chunks((WIDTH as usize * 4).next_multiple_of(256)).flat_map(|b| b.into_iter().map(|b| *b).take(WIDTH as usize * 4)).collect(),
-        )
-        .unwrap()
+        Rgba32FImage::from_raw(WIDTH, HEIGHT, data.chunks((WIDTH as usize * 4).next_multiple_of(256)).flat_map(|b| b.iter().copied().take(WIDTH as usize * 4)).collect()).unwrap()
     };
 
     println!("it took {:?}", start.elapsed());
